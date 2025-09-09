@@ -1,0 +1,1175 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Business Card Scanner - Documento</title>
+<style>
+body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; line-height: 1.5; margin: 2rem; }
+pre { overflow-x: auto; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; background: #f8f8f8; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+h1, h2 { margin-top: 2rem; }
+</style>
+</head>
+<body>
+<pre><code>//
+============================================
+// INTEGRAZIONI SERVIZI ESTERNI E
+FUNZIONALITÀ AVANZATE
+//
+============================================
+// 1. OCR REALE CON GOOGLE VISION API
+//
+============================================
+class GoogleVisionOCR {
+constructor(apiKey) {
+this.apiKey = apiKey;
+this.apiUrl = &#x27;https://vision.googleapis.com/v1/images:annotate&#x27;;
+}
+async extractTextFromImage(imageBase64) {
+const requestBody = {
+requests: [{
+image: {
+content:
+imageBase64.replace(/^data:image\/(png|jpg|jpeg);base64,/, &#x27;&#x27;)
+},
+features: [
+{ type: &#x27;TEXT_DETECTION&#x27;,
+maxResults: 1 },
+{ type:
+&#x27;DOCUMENT_TEXT_DETECTION&#x27;, maxResults: 1 }
+]
+}]
+};
+try {
+const response = await fetch(`${this.apiUrl}?key=${this.apiKey}`, {
+method: &#x27;POST&#x27;,
+headers: { &#x27;Content-Type&#x27;:
+&#x27;application/json&#x27; },
+body:
+JSON.stringify(requestBody)
+});
+const result = await response.json();
+return this.parseBusinessCardData(result.responses[0]);
+} catch (error) {
+console.error(&#x27;OCR Error:&#x27;, error);
+throw error;
+}
+}
+parseBusinessCardData(ocrResponse) {
+const text = ocrResponse.fullTextAnnotation?.text || &#x27;&#x27;;
+// Pattern matching per estrarre informazioni
+const patterns = {
+email: /[\w\.-]+@[\w\.-]+\.\w+/g,
+phone:
+/[\+]?[(]?[0-9]{1,4}[)]?[-\s\.]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{1,5}[-\s\.]?[0-9]{1,5}/g,
+website:
+/(?:www\.)?[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/[^\s]+/g,
+linkedin: /linkedin\.com\/in\/[\w-]+/gi,
+vat: /(?:P\.?IVA|VAT)\s*:?\s*([A-Z0-9]+)/gi
+};
+const lines = text.split(&#x27;\n&#x27;).filter(line =&gt; line.trim());
+return {
+fullText: text,
+name: this.extractName(lines),
+company: this.extractCompany(lines),
+role: this.extractRole(lines),
+email: (text.match(patterns.email) || [])[0],
+phone: this.formatPhone((text.match(patterns.phone) || [])[0]),
+website: (text.match(patterns.website) || [])[0],
+linkedin: (text.match(patterns.linkedin) || [])[0],
+vat: this.extractVAT(text),
+address: this.extractAddress(lines)
+};
+}
+extractName(lines) {
+// Il nome è spesso nelle prime righe e in caratteri più grandi
+const namePatterns = [
+/^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)$/,
+/^(Dott\.?|Dr\.?|Ing\.?|Avv\.?)?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)$/
+];
+for (let i = 0; i &lt; Math.min(3, lines.length); i++) {
+for (let pattern of namePatterns) {
+const match =
+lines[i].match(pattern);
+if (match) return
+match[0].trim();
+}
+}
+return lines[0]; // Fallback alla prima riga
+}
+extractCompany(lines) {
+const companyKeywords = [&#x27;S.r.l.&#x27;, &#x27;S.p.A.&#x27;, &#x27;Inc.&#x27;, &#x27;Ltd.&#x27;, &#x27;GmbH&#x27;,
+&#x27;LLC&#x27;, &#x27;Corporation&#x27;, &#x27;Company&#x27;];
+for (let line of lines) {
+if (companyKeywords.some(keyword =&gt; line.includes(keyword))) {
+return line.trim();
+}
+}
+// Cerca la riga dopo il nome
+return lines[1] || &#x27;&#x27;;
+}
+extractRole(lines) {
+const roleKeywords = [&#x27;CEO&#x27;, &#x27;Manager&#x27;, &#x27;Director&#x27;, &#x27;Presidente&#x27;,
+&#x27;Amministratore&#x27;,
+&#x27;Responsabile&#x27;,
+&#x27;Consulente&#x27;, &#x27;Sales&#x27;, &#x27;Marketing&#x27;, &#x27;Developer&#x27;];
+for (let line of lines) {
+if (roleKeywords.some(keyword =&gt;
+line.toLowerCase().includes(keyword.toLowerCase()))) {
+return line.trim();
+}
+}
+return &#x27;&#x27;;
+}
+extractAddress(lines) {
+const addressPatterns = [
+/via|viale|corso|piazza|largo|strada/i,
+/\d{5}/, // CAP italiano
+/\d+,?\s*\d{5}/ // Numero civico + CAP
+];
+for (let i = 0; i &lt; lines.length; i++) {
+if (addressPatterns.some(pattern =&gt; pattern.test(lines[i]))) {
+// Prendi questa riga e la
+successiva
+return lines.slice(i,
+Math.min(i + 2, lines.length)).join(&#x27;, &#x27;);
+}
+}
+return &#x27;&#x27;;
+}
+formatPhone(phone) {
+if (!phone) return &#x27;&#x27;;
+// Formatta numero italiano
+return phone.replace(/\s+/g, &#x27; &#x27;).trim();
+}
+extractVAT(text) {
+const vatMatch = text.match(/(?:P\.?IVA|VAT)\s*:?\s*([A-Z0-9]+)/i);
+return vatMatch ? vatMatch[1] : &#x27;&#x27;;
+}
+}
+// 2. INTEGRAZIONE CRM (HubSpot,
+Salesforce, Pipedrive)
+//
+============================================
+class CRMIntegration {
+constructor(crmType, apiKey) {
+this.crmType = crmType;
+this.apiKey = apiKey;
+this.endpoints = {
+hubspot: &#x27;https://api.hubapi.com/crm/v3/objects/contacts&#x27;,
+salesforce:
+&#x27;https://your-instance.salesforce.com/services/data/v55.0/sobjects/Contact&#x27;,
+pipedrive: &#x27;https://api.pipedrive.com/v1/persons&#x27;
+};
+}
+async syncContact(contactData) {
+switch(this.crmType) {
+case &#x27;hubspot&#x27;:
+return
+this.syncToHubSpot(contactData);
+case &#x27;salesforce&#x27;:
+return
+this.syncToSalesforce(contactData);
+case &#x27;pipedrive&#x27;:
+return
+this.syncToPipedrive(contactData);
+default:
+throw new Error(&#x27;CRM non
+supportato&#x27;);
+}
+}
+async syncToHubSpot(contact) {
+const hubspotData = {
+properties: {
+firstname: contact.name.split(&#x27;
+&#x27;)[0],
+lastname: contact.name.split(&#x27;
+&#x27;).slice(1).join(&#x27; &#x27;),
+email: contact.email,
+phone: contact.phone,
+company: contact.company,
+jobtitle: contact.role,
+address: contact.address,
+hs_lead_status: &#x27;NEW&#x27;
+}
+};
+const response = await fetch(this.endpoints.hubspot, {
+method: &#x27;POST&#x27;,
+headers: {
+&#x27;Authorization&#x27;: `Bearer
+${this.apiKey}`,
+&#x27;Content-Type&#x27;:
+&#x27;application/json&#x27;
+},
+body: JSON.stringify(hubspotData)
+});
+return response.json();
+}
+async syncToSalesforce(contact) {
+// Richiede OAuth2 authentication
+const salesforceData = {
+FirstName: contact.name.split(&#x27; &#x27;)[0],
+LastName: contact.name.split(&#x27; &#x27;).slice(1).join(&#x27; &#x27;),
+Email: contact.email,
+Phone: contact.phone,
+Title: contact.role,
+Company: contact.company,
+MailingStreet: contact.address,
+LeadSource: &#x27;Business Card&#x27;
+};
+const response = await fetch(this.endpoints.salesforce, {
+method: &#x27;POST&#x27;,
+headers: {
+&#x27;Authorization&#x27;: `Bearer
+${this.apiKey}`,
+&#x27;Content-Type&#x27;:
+&#x27;application/json&#x27;
+},
+body: JSON.stringify(salesforceData)
+});
+return response.json();
+}
+async syncToPipedrive(contact) {
+const pipedriveData = {
+name: contact.name,
+email: contact.email,
+phone: contact.phone,
+org_name: contact.company,
+job_title: contact.role,
+visible_to: &#x27;3&#x27; // Everyone
+};
+const response = await
+fetch(`${this.endpoints.pipedrive}?api_token=${this.apiKey}`, {
+method: &#x27;POST&#x27;,
+headers: {
+&#x27;Content-Type&#x27;:
+&#x27;application/json&#x27;
+},
+body: JSON.stringify(pipedriveData)
+});
+return response.json();
+}
+async bulkSync(contacts) {
+const results = [];
+for (const contact of contacts) {
+try {
+const result = await
+this.syncContact(contact);
+results.push({ success: true,
+contact, result });
+} catch (error) {
+results.push({ success: false,
+contact, error: error.message });
+}
+}
+return results;
+}
+}
+// 3. SINCRONIZZAZIONE CLOUD (Firebase)
+//
+============================================
+class CloudSync {
+constructor(firebaseConfig) {
+// Inizializza Firebase
+this.firebaseConfig = firebaseConfig;
+// firebase.initializeApp(firebaseConfig);
+// this.db = firebase.firestore();
+// this.auth = firebase.auth();
+// this.storage = firebase.storage();
+}
+async initializeFirebase() {
+const firebaseConfig = {
+apiKey: &quot;your-api-key&quot;,
+authDomain: &quot;your-app.firebaseapp.com&quot;,
+projectId: &quot;your-project-id&quot;,
+storageBucket: &quot;your-app.appspot.com&quot;,
+messagingSenderId: &quot;sender-id&quot;,
+appId: &quot;app-id&quot;
+};
+// Script da includere nell&#x27;HTML
+// &lt;script
+src=&quot;https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js&quot;&gt;&lt;/script&gt;
+// &lt;script
+src=&quot;https://www.gstatic.com/firebasejs/9.0.0/firebase-firestore-compat.js&quot;&gt;&lt;/script&gt;
+// &lt;script
+src=&quot;https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js&quot;&gt;&lt;/script&gt;
+// &lt;script
+src=&quot;https://www.gstatic.com/firebasejs/9.0.0/firebase-storage-compat.js&quot;&gt;&lt;/script&gt;
+}
+async authenticateUser(email, password) {
+try {
+const userCredential = await
+firebase.auth().signInWithEmailAndPassword(email, password);
+return userCredential.user;
+} catch (error) {
+console.error(&#x27;Authentication error:&#x27;, error);
+throw error;
+}
+}
+async saveContact(contact) {
+try {
+const docRef = await firebase.firestore().collection(&#x27;contacts&#x27;).add({</code></pre><p>...contact,</p><pre><code>userId:
+firebase.auth().currentUser.uid,
+createdAt:
+firebase.firestore.FieldValue.serverTimestamp(),
+updatedAt:
+firebase.firestore.FieldValue.serverTimestamp()
+});
+return docRef.id;
+} catch (error) {
+console.error(&#x27;Error saving contact:&#x27;, error);
+throw error;
+}
+}
+async getContacts() {
+try {
+const userId = firebase.auth().currentUser.uid;
+const snapshot = await firebase.firestore()
+.collection(&#x27;contacts&#x27;)
+.where(&#x27;userId&#x27;, &#x27;==&#x27;, userId)
+.orderBy(&#x27;createdAt&#x27;, &#x27;desc&#x27;)
+.get();
+return snapshot.docs.map(doc =&gt; ({
+id: doc.id,
+...doc.data()
+}));
+} catch (error) {
+console.error(&#x27;Error getting contacts:&#x27;, error);
+throw error;
+}
+}
+async uploadBusinessCardImage(imageBlob, contactId) {
+try {
+const storageRef = firebase.storage().ref();
+const imageRef = storageRef.child(`business-cards/${contactId}.jpg`);
+const snapshot = await imageRef.put(imageBlob);
+const downloadURL = await snapshot.ref.getDownloadURL();
+// Aggiorna il contatto con l&#x27;URL dell&#x27;immagine
+await firebase.firestore()
+.collection(&#x27;contacts&#x27;)
+.doc(contactId)
+.update({ businessCardUrl:
+downloadURL });
+return downloadURL;
+} catch (error) {
+console.error(&#x27;Error uploading image:&#x27;, error);
+throw error;
+}
+}
+async syncOfflineChanges() {
+// Recupera modifiche offline dal localStorage
+const offlineChanges = JSON.parse(localStorage.getItem(&#x27;offlineChanges&#x27;)
+|| &#x27;[]&#x27;);
+for (const change of offlineChanges) {
+try {
+switch(change.type) {
+case &#x27;create&#x27;:
+await
+this.saveContact(change.data);
+break;
+case &#x27;update&#x27;:
+await
+this.updateContact(change.id, change.data);
+break;
+case &#x27;delete&#x27;:
+await
+this.deleteContact(change.id);
+break;
+}
+} catch (error) {
+console.error(&#x27;Sync error:&#x27;,
+error);
+}
+}
+// Pulisci le modifiche offline
+localStorage.removeItem(&#x27;offlineChanges&#x27;);
+}
+}
+// 4. EXPORT DATI (CSV, Excel, PDF)
+//
+============================================
+class DataExporter {
+constructor() {
+this.contacts = [];
+}
+exportToCSV(contacts) {
+const headers = [&#x27;Nome&#x27;, &#x27;Azienda&#x27;, &#x27;Ruolo&#x27;, &#x27;Telefono&#x27;, &#x27;Email&#x27;,
+&#x27;Indirizzo&#x27;, &#x27;Settore&#x27;, &#x27;Note&#x27;, &#x27;Data Creazione&#x27;];
+const csvContent = [
+headers.join(&#x27;,&#x27;),
+...contacts.map(contact =&gt; [
+this.escapeCSV(contact.name),
+this.escapeCSV(contact.company),
+this.escapeCSV(contact.role),
+this.escapeCSV(contact.phone),
+this.escapeCSV(contact.email),
+this.escapeCSV(contact.address),
+this.escapeCSV(contact.sector),
+this.escapeCSV(contact.notes),
+new
+Date(contact.createdAt).toLocaleDateString(&#x27;it-IT&#x27;)
+].join(&#x27;,&#x27;))
+].join(&#x27;\n&#x27;);
+this.downloadFile(csvContent, &#x27;contacts.csv&#x27;, &#x27;text/csv&#x27;);
+}
+escapeCSV(str) {
+if (!str) return &#x27;&#x27;;
+if (str.includes(&#x27;,&#x27;) || str.includes(&#x27;&quot;&#x27;) || str.includes(&#x27;\n&#x27;)) {
+return `&quot;${str.replace(/&quot;/g, &#x27;&quot;&quot;&#x27;)}&quot;`;
+}
+return str;
+}
+async exportToExcel(contacts) {
+// Usa SheetJS (xlsx library)
+// Include: &lt;script
+src=&quot;https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js&quot;&gt;&lt;/script&gt;
+const worksheet = XLSX.utils.json_to_sheet(contacts.map(contact =&gt; ({</code></pre><p>&#x27;Nome&#x27;: contact.name,</p><p>&#x27;Azienda&#x27;: contact.company,</p><p>&#x27;Ruolo&#x27;: contact.role,</p><p>&#x27;Telefono&#x27;: contact.phone,</p><p>&#x27;Email&#x27;: contact.email,</p><p>&#x27;Indirizzo&#x27;: contact.address,</p><p>&#x27;Settore&#x27;: contact.sector,</p><p>&#x27;Note&#x27;: contact.notes,</p><p>&#x27;Preferito&#x27;: contact.starred ? &#x27;Sì&#x27; : &#x27;No&#x27;,</p><pre><code>&#x27;Data Creazione&#x27;: new
+Date(contact.createdAt).toLocaleDateString(&#x27;it-IT&#x27;)
+})));
+const workbook = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(workbook, worksheet, &#x27;Contatti&#x27;);
+// Styling
+const range = XLSX.utils.decode_range(worksheet[&#x27;!ref&#x27;]);
+for (let C = range.s.c; C &lt;= range.e.c; ++C) {
+const address = XLSX.utils.encode_col(C) + &quot;1&quot;;
+if (!worksheet[address]) continue;
+worksheet[address].s = {
+font: { bold: true },
+fill: { fgColor: { rgb:
+&quot;667EEA&quot; } }
+};
+}
+XLSX.writeFile(workbook, &#x27;contacts.xlsx&#x27;);
+}
+async exportToPDF(contacts) {
+// Usa jsPDF
+// Include: &lt;script
+src=&quot;https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js&quot;&gt;&lt;/script&gt;
+// Include: &lt;script
+src=&quot;https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js&quot;&gt;&lt;/script&gt;
+const { jsPDF } = window.jspdf;
+const doc = new jsPDF();
+// Header
+doc.setFontSize(20);
+doc.text(&#x27;Lista Contatti Business&#x27;, 14, 22);
+doc.setFontSize(10);
+doc.text(`Generato il: ${new Date().toLocaleDateString(&#x27;it-IT&#x27;)}`, 14,
+30);
+doc.text(`Totale contatti: ${contacts.length}`, 14, 36);
+// Tabella contatti
+const tableColumns = [&#x27;Nome&#x27;, &#x27;Azienda&#x27;, &#x27;Telefono&#x27;, &#x27;Email&#x27;];
+const tableRows = contacts.map(contact =&gt; [</code></pre><p>contact.name,</p><pre><code>contact.company || &#x27;N/A&#x27;,
+contact.phone || &#x27;N/A&#x27;,
+contact.email || &#x27;N/A&#x27;
+]);
+doc.autoTable({
+head: [tableColumns],
+body: tableRows,
+startY: 45,
+styles: { fontSize: 8 },
+headStyles: { fillColor: [102, 126, 234] }
+});
+doc.save(&#x27;contacts.pdf&#x27;);
+}
+exportToVCard(contact) {
+const vcard = `BEGIN:VCARD
+VERSION:3.0
+FN:${contact.name}
+ORG:${contact.company || &#x27;&#x27;}
+TITLE:${contact.role || &#x27;&#x27;}
+TEL:${contact.phone || &#x27;&#x27;}
+EMAIL:${contact.email || &#x27;&#x27;}
+ADR:;;${contact.address || &#x27;&#x27;};;;;
+NOTE:${contact.notes || &#x27;&#x27;}
+END:VCARD`;
+this.downloadFile(vcard, `${contact.name.replace(/\s+/g, &#x27;_&#x27;)}.vcf`,
+&#x27;text/vcard&#x27;);
+}
+downloadFile(content, filename, mimeType) {
+const blob = new Blob([content], { type: mimeType });
+const url = URL.createObjectURL(blob);
+const a = document.createElement(&#x27;a&#x27;);
+a.href = url;
+a.download = filename;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
+}
+}
+// 5. GEOLOCALIZZAZIONE E MAPPA CONTATTI
+//
+============================================
+class ContactsMap {
+constructor(mapContainerId) {
+this.mapContainerId = mapContainerId;
+this.map = null;
+this.markers = [];
+}
+async initializeMap() {
+// Usa Leaflet per mappe open source
+// Include: &lt;link rel=&quot;stylesheet&quot;
+href=&quot;https://unpkg.com/leaflet/dist/leaflet.css&quot; /&gt;
+// Include: &lt;script
+src=&quot;https://unpkg.com/leaflet/dist/leaflet.js&quot;&gt;&lt;/script&gt;
+this.map = L.map(this.mapContainerId).setView([41.9028, 12.4964], 6); //
+Italia
+L.tileLayer(&#x27;https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png&#x27;, {
+attribution: &#x27;© OpenStreetMap contributors&#x27;
+}).addTo(this.map);
+}
+async geocodeAddress(address) {
+// Usa Nominatim per geocoding gratuito
+const url =
+`https://nominatim.openstreetmap.org/search?format=json&amp;q=${encodeURIComponent(address)}`;
+try {
+const response = await fetch(url);
+const data = await response.json();
+if (data &amp;&amp; data[0]) {
+return {
+lat:
+parseFloat(data[0].lat),
+lng:
+parseFloat(data[0].lon),
+display_name:
+data[0].display_name
+};
+}
+} catch (error) {
+console.error(&#x27;Geocoding error:&#x27;, error);
+}
+return null;
+}
+async addContactToMap(contact) {
+if (!contact.address) return;
+const location = await this.geocodeAddress(contact.address);
+if (!location) return;
+const marker = L.marker([location.lat, location.lng])
+.addTo(this.map)</code></pre><p>.bindPopup(`</p><pre><code>&lt;strong&gt;${contact.name}&lt;/strong&gt;&lt;br&gt;
+${contact.company ||
+&#x27;&#x27;}&lt;br&gt;
+${contact.address}&lt;br&gt;
+&lt;a
+href=&quot;tel:${contact.phone}&quot;&gt;${contact.phone}&lt;/a&gt;
+`);
+this.markers.push(marker);
+}
+async plotAllContacts(contacts) {
+// Rimuovi marker esistenti
+this.markers.forEach(marker =&gt; marker.remove());
+this.markers = [];
+// Aggiungi nuovi marker
+for (const contact of contacts) {
+await this.addContactToMap(contact);
+}
+// Adatta la vista per mostrare tutti i marker
+if (this.markers.length &gt; 0) {
+const group = L.featureGroup(this.markers);
+this.map.fitBounds(group.getBounds().pad(0.1));
+}
+}
+calculateDistance(lat1, lon1, lat2, lon2) {
+// Formula Haversine per calcolare distanza tra due punti
+const R = 6371; // Raggio della Terra in km
+const dLat = (lat2 - lat1) * Math.PI / 180;
+const dLon = (lon2 - lon1) * Math.PI / 180;
+const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+Math.cos(lat1 * Math.PI /
+180) * Math.cos(lat2 * Math.PI / 180) *
+Math.sin(dLon/2) *
+Math.sin(dLon/2);
+const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+return R * c;
+}
+async findNearbyContacts(userLat, userLon, radiusKm, contacts) {
+const nearbyContacts = [];
+for (const contact of contacts) {
+if (!contact.address) continue;
+const location = await this.geocodeAddress(contact.address);
+if (!location) continue;
+const distance = this.calculateDistance(userLat, userLon, location.lat,
+location.lng);
+if (distance &lt;= radiusKm) {
+nearbyContacts.push({</code></pre><p>...contact,</p><pre><code>distance:
+Math.round(distance * 10) / 10
+});
+}
+}
+return nearbyContacts.sort((a, b) =&gt; a.distance - b.distance);
+}
+}
+// 6. NOTIFICHE PUSH E PROMEMORIA
+//
+============================================
+class NotificationManager {
+constructor() {
+this.permission = null;
+}
+async requestPermission() {
+if (&#x27;Notification&#x27; in window) {
+this.permission = await Notification.requestPermission();
+return this.permission === &#x27;granted&#x27;;
+}
+return false;
+}
+showNotification(title, options = {}) {
+if (this.permission !== &#x27;granted&#x27;) return;
+const notification = new Notification(title, {
+icon: &#x27;/icon-192x192.png&#x27;,
+badge: &#x27;/badge-72x72.png&#x27;,
+vibrate: [200, 100, 200],</code></pre><p>...options</p><pre><code>});
+notification.onclick = function(event) {
+event.preventDefault();
+window.focus();
+notification.close();
+};
+return notification;
+}
+scheduleFollowUpReminder(contact, date) {
+const now = new Date();
+const reminderDate = new Date(date);
+const timeUntilReminder = reminderDate - now;
+if (timeUntilReminder &gt; 0) {
+setTimeout(() =&gt; {
+this.showNotification(&#x27;Promemoria Follow-up&#x27;, {
+body: `È ora di
+ricontattare ${contact.name} - ${contact.company}`,
+tag:
+`followup-${contact.id}`,
+data: { contactId:
+contact.id }
+});
+}, timeUntilReminder);
+}
+}
+setupBackgroundSync() {
+if (&#x27;serviceWorker&#x27; in navigator &amp;&amp; &#x27;SyncManager&#x27; in window) {
+navigator.serviceWorker.ready.then(registration =&gt; {
+return
+registration.sync.register(&#x27;sync-contacts&#x27;);
+});
+}
+}
+}
+// 7. ANALYTICS AVANZATE
+//
+============================================
+class AdvancedAnalytics {
+constructor(contacts) {
+this.contacts = contacts;
+}
+getContactsGrowth() {
+const monthlyGrowth = {};
+this.contacts.forEach(contact =&gt; {
+const date = new Date(contact.createdAt);
+const monthKey = `${date.getFullYear()}-${String(date.getMonth() +
+1).padStart(2, &#x27;0&#x27;)}`;
+monthlyGrowth[monthKey] = (monthlyGrowth[monthKey] || 0) + 1;
+});
+return Object.entries(monthlyGrowth)
+.sort((a, b) =&gt; a[0].localeCompare(b[0]))
+.map(([month, count]) =&gt; ({ month, count }));
+}
+getTopCompanies() {
+const companyCount = {};
+this.contacts.forEach(contact =&gt; {
+if (contact.company) {
+companyCount[contact.company] =
+(companyCount[contact.company] || 0) + 1;
+}
+});
+return Object.entries(companyCount)
+.sort((a, b) =&gt; b[1] - a[1])
+.slice(0, 10)
+.map(([company, count]) =&gt; ({ company, count }));
+}
+getConversionFunnel() {
+const funnel = {
+scanned: this.contacts.length,
+contacted: this.contacts.filter(c =&gt; c.lastContactedAt).length,
+qualified: this.contacts.filter(c =&gt; c.qualified).length,
+converted: this.contacts.filter(c =&gt; c.converted).length
+};
+return funnel;
+}
+getEngagementScore(contact) {
+let score = 0;
+// Fattori di engagement
+if (contact.email) score += 20;
+if (contact.phone) score += 20;
+if (contact.company) score += 15;
+if (contact.role) score += 15;
+if (contact.linkedin) score += 10;
+if (contact.notes) score += 10;
+if (contact.starred) score += 10;
+// Interazioni
+const daysSinceCreation = (Date.now() - new Date(contact.createdAt)) /
+(1000 * 60 * 60 * 24);
+if (daysSinceCreation &lt; 7) score += 20;
+else if (daysSinceCreation &lt; 30) score += 10;
+return Math.min(score, 100);
+}
+getNetworkValue() {
+const sectorValues = {</code></pre><p>&#x27;Tecnologia&#x27;: 1000,</p><p>&#x27;Finanza&#x27;: 1500,</p><p>&#x27;Manifatturiero&#x27;: 800,</p><p>&#x27;Servizi&#x27;: 600,</p><p>&#x27;Consulenza&#x27;: 1200,</p><p>&#x27;Commercio&#x27;: 500</p><pre><code>};
+let totalValue = 0;
+this.contacts.forEach(contact =&gt; {
+const baseValue = sectorValues[contact.sector] || 400;
+const engagementMultiplier = this.getEngagementScore(contact) / 100;
+totalValue += baseValue * engagementMultiplier;
+});
+return Math.round(totalValue);
+}
+}
+// 8. INTEGRAZIONE CALENDARIO
+//
+============================================
+class CalendarIntegration {
+createGoogleCalendarEvent(contact, date, duration = 60) {
+const startDate = new Date(date);
+const endDate = new Date(startDate.getTime() + duration * 60000);
+const event = {
+text: `Meeting con ${contact.name}`,
+dates:
+`${this.formatDateForGoogle(startDate)}/${this.formatDateForGoogle(endDate)}`,
+details: `Incontro con ${contact.name} di ${contact.company}. Tel:
+${contact.phone}, Email: ${contact.email}`,
+location: contact.address || &#x27;&#x27;
+};
+const googleCalendarUrl =
+`https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=${encodeURIComponent(event.text)}&amp;dates=${event.dates}&amp;details=${encodeURIComponent(event.details)}&amp;location=${encodeURIComponent(event.location)}`;
+window.open(googleCalendarUrl, &#x27;_blank&#x27;);
+}
+formatDateForGoogle(date) {
+return date.toISOString().replace(/-|:|\.\d\d\d/g, &#x27;&#x27;);
+}
+createICSFile(contact, date, duration = 60) {
+const startDate = new Date(date);
+const endDate = new Date(startDate.getTime() + duration * 60000);
+const icsContent = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Business Card Scanner//EN
+BEGIN:VEVENT
+UID:${Date.now()}@businesscardscanner.com
+DTSTAMP:${this.formatDateForICS(new
+Date())}
+DTSTART:${this.formatDateForICS(startDate)}
+DTEND:${this.formatDateForICS(endDate)}
+SUMMARY:Meeting con ${contact.name}
+DESCRIPTION:Incontro con ${contact.name}
+di ${contact.company}\\nTel: ${contact.phone}\\nEmail: ${contact.email}
+LOCATION:${contact.address || &#x27;&#x27;}
+END:VEVENT
+END:VCALENDAR`;
+const blob = new Blob([icsContent], { type: &#x27;text/calendar&#x27; });
+const url = URL.createObjectURL(blob);
+const a = document.createElement(&#x27;a&#x27;);
+a.href = url;
+a.download = `meeting_${contact.name.replace(/\s+/g, &#x27;_&#x27;)}.ics`;
+a.click();
+URL.revokeObjectURL(url);
+}
+formatDateForICS(date) {
+return date.toISOString().replace(/-|:|\.\d\d\d/g,
+&#x27;&#x27;).replace(/\.\d\d\dZ/, &#x27;Z&#x27;);
+}
+}
+// 9. INTELLIGENZA ARTIFICIALE E
+SUGGERIMENTI
+//
+============================================
+class AIAssistant {
+constructor() {
+this.patterns = {
+emailDomain: {},
+companySector: {},
+roleKeywords: {}
+};
+}
+learnFromContacts(contacts) {
+contacts.forEach(contact =&gt; {
+// Impara pattern email-azienda
+if (contact.email &amp;&amp; contact.company) {
+const domain =
+contact.email.split(&#x27;@&#x27;)[1];
+this.patterns.emailDomain[domain] = contact.company;
+}
+// Impara associazioni azienda-settore
+if (contact.company &amp;&amp; contact.sector) {
+this.patterns.companySector[contact.company] = contact.sector;
+}
+// Impara keyword ruoli
+if (contact.role) {
+const keywords =
+contact.role.toLowerCase().split(&#x27; &#x27;);
+keywords.forEach(keyword =&gt;
+{
+if
+(!this.patterns.roleKeywords[keyword]) {
+this.patterns.roleKeywords[keyword] = [];
+}
+this.patterns.roleKeywords[keyword].push(contact.sector);
+});
+}
+});
+}
+suggestCompanyFromEmail(email) {
+if (!email) return null;
+const domain = email.split(&#x27;@&#x27;)[1];
+return this.patterns.emailDomain[domain] || null;
+}
+suggestSectorFromCompany(company) {
+if (!company) return null;
+// Cerca corrispondenza esatta
+if (this.patterns.companySector[company]) {
+return this.patterns.companySector[company];
+}
+// Cerca corrispondenza parziale
+for (const [knownCompany, sector] of
+Object.entries(this.patterns.companySector)) {
+if (company.toLowerCase().includes(knownCompany.toLowerCase()) ||
+knownCompany.toLowerCase().includes(company.toLowerCase())) {
+return sector;
+}
+}
+return null;
+}
+suggestSectorFromRole(role) {
+if (!role) return null;
+const keywords = role.toLowerCase().split(&#x27; &#x27;);
+const sectorCounts = {};
+keywords.forEach(keyword =&gt; {
+if (this.patterns.roleKeywords[keyword]) {
+this.patterns.roleKeywords[keyword].forEach(sector =&gt; {
+sectorCounts[sector] =
+(sectorCounts[sector] || 0) + 1;
+});
+}
+});
+// Ritorna il settore più frequente
+const sortedSectors = Object.entries(sectorCounts).sort((a, b) =&gt;
+b[1] - a[1]);
+return sortedSectors.length &gt; 0 ? sortedSectors[0][0] : null;
+}
+generateFollowUpSuggestions(contact) {
+const suggestions = [];
+const daysSinceCreation = (Date.now() - new Date(contact.createdAt)) /
+(1000 * 60 * 60 * 24);
+if (daysSinceCreation &gt; 7 &amp;&amp; !contact.lastContactedAt) {
+suggestions.push({
+type: &#x27;follow-up&#x27;,
+priority: &#x27;high&#x27;,
+message: `È passata una
+settimana dal primo contatto con ${contact.name}. Considera di inviare un&#x27;email
+di follow-up.`,
+action: &#x27;send-email&#x27;
+});
+}
+if (!contact.linkedin &amp;&amp; contact.role) {
+suggestions.push({
+type: &#x27;enrich&#x27;,
+priority: &#x27;medium&#x27;,
+message: `Cerca ${contact.name}
+su LinkedIn per completare il profilo.`,
+action: &#x27;search-linkedin&#x27;
+});
+}
+if (contact.company &amp;&amp; !contact.website) {
+suggestions.push({
+type: &#x27;research&#x27;,
+priority: &#x27;low&#x27;,
+message: `Ricerca il sito web
+di ${contact.company} per maggiori informazioni.`,
+action: &#x27;search-web&#x27;
+});
+}
+return suggestions;
+}
+detectDuplicates(contacts) {
+const duplicates = [];
+const seen = {};
+contacts.forEach((contact, index) =&gt; {
+// Crea chiavi uniche per rilevare duplicati
+const emailKey = contact.email?.toLowerCase();
+const phoneKey = contact.phone?.replace(/\D/g, &#x27;&#x27;);
+const nameKey = contact.name?.toLowerCase().replace(/\s+/g, &#x27;&#x27;);
+// Controlla email duplicata
+if (emailKey &amp;&amp; seen[`email:${emailKey}`]) {
+duplicates.push({
+type: &#x27;email&#x27;,
+contacts:
+[seen[`email:${emailKey}`], contact]
+});
+} else if (emailKey) {
+seen[`email:${emailKey}`] =
+contact;
+}
+// Controlla telefono duplicato
+if (phoneKey &amp;&amp; seen[`phone:${phoneKey}`]) {
+duplicates.push({
+type: &#x27;phone&#x27;,
+contacts:
+[seen[`phone:${phoneKey}`], contact]
+});
+} else if (phoneKey) {
+seen[`phone:${phoneKey}`] =
+contact;
+}
+// Controlla nome simile (fuzzy matching)
+if (nameKey) {
+for (const key in seen) {
+if
+(key.startsWith(&#x27;name:&#x27;)) {
+const existingName =
+key.substring(5);
+if
+(this.calculateSimilarity(nameKey, existingName) &gt; 0.8) {
+duplicates.push({
+type: &#x27;name&#x27;,
+contacts:
+[seen[key], contact],
+similarity:
+this.calculateSimilarity(nameKey, existingName)
+});
+}
+}
+}
+seen[`name:${nameKey}`] =
+contact;
+}
+});
+return duplicates;
+}
+calculateSimilarity(str1, str2) {
+// Algoritmo di Levenshtein semplificato
+const longer = str1.length &gt; str2.length ? str1 : str2;
+const shorter = str1.length &gt; str2.length ? str2 : str1;
+if (longer.length === 0) return 1.0;
+const editDistance = this.levenshteinDistance(longer, shorter);
+return (longer.length - editDistance) / longer.length;
+}
+levenshteinDistance(str1, str2) {
+const matrix = [];
+for (let i = 0; i &lt;= str2.length; i++) {
+matrix[i] = [i];
+}
+for (let j = 0; j &lt;= str1.length; j++) {
+matrix[0][j] = j;
+}
+for (let i = 1; i &lt;= str2.length; i++) {
+for (let j = 1; j &lt;= str1.length; j++) {
+if (str2.charAt(i - 1) ===
+str1.charAt(j - 1)) {
+matrix[i][j] = matrix[i -
+1][j - 1];
+} else {
+matrix[i][j] = Math.min(
+matrix[i - 1][j - 1] +
+1,
+matrix[i][j - 1] + 1,
+matrix[i - 1][j] + 1
+);
+}
+}
+}
+return matrix[str2.length][str1.length];
+}
+}
+// 10. BACKUP E RESTORE
+//
+============================================
+class BackupManager {
+constructor() {
+this.backupKey = &#x27;businesscard_backups&#x27;;
+}
+createBackup(contacts) {
+const backup = {
+timestamp: new Date().toISOString(),
+version: &#x27;1.0.0&#x27;,
+contacts: contacts,
+settings: this.getAppSettings(),
+metadata: {
+totalContacts: contacts.length,
+device: navigator.userAgent,
+appVersion: &#x27;1.0.0&#x27;
+}
+};
+return backup;
+}
+saveLocalBackup(contacts) {
+const backup = this.createBackup(contacts);
+const backups = this.getLocalBackups();
+// Mantieni solo gli ultimi 5 backup
+backups.unshift(backup);
+if (backups.length &gt; 5) {
+backups.pop();
+}
+localStorage.setItem(this.backupKey, JSON.stringify(backups));
+return backup;
+}
+getLocalBackups() {
+const backups = localStorage.getItem(this.backupKey);
+return backups ? JSON.parse(backups) : [];
+}
+async saveToGoogleDrive(contacts) {
+// Richiede Google Drive API
+// Include: &lt;script
+src=&quot;https://apis.google.com/js/api.js&quot;&gt;&lt;/script&gt;
+const backup = this.createBackup(contacts);
+const file = new Blob([JSON.stringify(backup, null, 2)], { type:
+&#x27;application/json&#x27; });
+// Inizializza Google Drive API
+await this.initGoogleDrive();
+const metadata = {
+name: `backup_businesscards_${new Date().toISOString()}.json`,
+mimeType: &#x27;application/json&#x27;,
+parents: [&#x27;appDataFolder&#x27;]
+};
+const form = new FormData();
+form.append(&#x27;metadata&#x27;, new Blob([JSON.stringify(metadata)], { type:
+&#x27;application/json&#x27; }));
+form.append(&#x27;file&#x27;, file);
+const response = await
+fetch(&#x27;https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&#x27;,
+{
+method: &#x27;POST&#x27;,
+headers: {
+&#x27;Authorization&#x27;: `Bearer
+${gapi.auth.getToken().access_token}`
+},
+body: form
+});
+return response.json();
+}
+async restoreFromBackup(backup) {
+try {
+// Valida il backup
+if (!backup.contacts || !Array.isArray(backup.contacts)) {
+throw new Error(&#x27;Backup non
+valido&#x27;);
+}
+// Ripristina contatti
+localStorage.setItem(&#x27;businessCards&#x27;, JSON.stringify(backup.contacts));
+// Ripristina impostazioni
+if (backup.settings) {
+this.restoreAppSettings(backup.settings);
+}
+return {
+success: true,
+contactsRestored:
+backup.contacts.length,
+timestamp: backup.timestamp
+};
+} catch (error) {
+return {
+success: false,
+error: error.message
+};
+}
+}
+exportEncryptedBackup(contacts, password) {
+// Usa CryptoJS per crittografia
+// Include: &lt;script
+src=&quot;https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js&quot;&gt;&lt;/script&gt;
+const backup = this.createBackup(contacts);
+const encrypted = CryptoJS.AES.encrypt(JSON.stringify(backup),
+password).toString();
+const blob = new Blob([encrypted], { type: &#x27;text/plain&#x27; });
+const url = URL.createObjectURL(blob);
+const a = document.createElement(&#x27;a&#x27;);
+a.href = url;
+a.download = `backup_encrypted_${new Date().toISOString()}.bcs`;
+a.click();
+URL.revokeObjectURL(url);
+}
+importEncryptedBackup(encryptedData, password) {
+try {
+const decrypted = CryptoJS.AES.decrypt(encryptedData, password);
+const backup = JSON.parse(decrypted.toString(CryptoJS.enc.Utf8));
+return this.restoreFromBackup(backup);
+} catch (error) {
+return {
+success: false,
+error: &#x27;Password errata o file
+corrotto&#x27;
+};
+}
+}
+getAppSettings() {
+return {
+theme: localStorage.getItem(&#x27;theme&#x27;) || &#x27;light&#x27;,
+language: localStorage.getItem(&#x27;language&#x27;) || &#x27;it&#x27;,
+syncEnabled: localStorage.getItem(&#x27;syncEnabled&#x27;) === &#x27;true&#x27;,
+notificationsEnabled: localStorage.getItem(&#x27;notificationsEnabled&#x27;) ===
+&#x27;true&#x27;,
+autoBackup: localStorage.getItem(&#x27;autoBackup&#x27;) === &#x27;true&#x27;
+};
+}
+restoreAppSettings(settings) {
+Object.entries(settings).forEach(([key, value]) =&gt; {
+localStorage.setItem(key, value.toString());
+});
+}
+async initGoogleDrive() {
+return new Promise((resolve, reject) =&gt; {
+gapi.load(&#x27;client:auth2&#x27;, async () =&gt; {
+try {
+await gapi.client.init({
+apiKey: &#x27;YOUR_API_KEY&#x27;,
+clientId:
+&#x27;YOUR_CLIENT_ID&#x27;,
+discoveryDocs:
+[&#x27;https://www.googleapis.com/discovery/v1/apis/drive/v3/rest&#x27;],
+scope:
+&#x27;https://www.googleapis.com/auth/drive.appdata&#x27;
+});
+resolve();
+} catch (error) {
+reject(error);
+}
+});
+});
+}
+}
+// ESEMPIO DI UTILIZZO COMPLETO
+//
+============================================
+// Inizializzazione
+document.addEventListener(&#x27;DOMContentLoaded&#x27;,
+async () =&gt; {
+// 1. Inizializza OCR
+const ocr = new GoogleVisionOCR(&#x27;YOUR_GOOGLE_VISION_API_KEY&#x27;);
+// 2. Inizializza CRM
+const crm = new CRMIntegration(&#x27;hubspot&#x27;, &#x27;YOUR_HUBSPOT_API_KEY&#x27;);
+// 3. Inizializza Cloud Sync
+const cloudSync = new CloudSync({
+apiKey: &quot;your-firebase-api-key&quot;,
+authDomain: &quot;your-app.firebaseapp.com&quot;,
+projectId: &quot;your-project-id&quot;
+});
+// 4. Inizializza Export
+const exporter = new DataExporter();
+// 5. Inizializza Mappa
+const contactsMap = new ContactsMap(&#x27;mapContainer&#x27;);
+await contactsMap.initializeMap();
+// 6. Inizializza Notifiche
+const notifications = new NotificationManager();
+await notifications.requestPermission();
+// 7. Inizializza Analytics
+const contacts = JSON.parse(localStorage.getItem(&#x27;businessCards&#x27;) ||
+&#x27;[]&#x27;);
+const analytics = new AdvancedAnalytics(contacts);
+// 8. Inizializza AI Assistant
+const ai = new AIAssistant();
+ai.learnFromContacts(contacts);
+// 9. Inizializza Backup
+const backup = new BackupManager();
+// Auto-backup ogni 24 ore
+setInterval(() =&gt; {
+backup.saveLocalBackup(contacts);
+}, 24 * 60 * 60 * 1000);
+});
+// Export per uso in altri moduli
+export {</code></pre><p>GoogleVisionOCR,</p><p>CRMIntegration,</p><p>CloudSync,</p><p>DataExporter,</p><p>ContactsMap,</p><p>NotificationManager,</p><p>AdvancedAnalytics,</p><p>CalendarIntegration,</p><p>AIAssistant,</p><p>BackupManager</p><pre><code>};</code></pre>
+</body>
+</html>
